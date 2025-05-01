@@ -24,7 +24,7 @@ Encapsulates the Redis client and related configurations.
 
 ## Functions
 
-### `func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc) (*Client, error)`
+### `func NewClient(logger *logrus.Logger, ctx context.Context) (*Client, error)`
 
 Initializes and returns a new Redis client.
 
@@ -32,7 +32,6 @@ Initializes and returns a new Redis client.
 
   - `logger`: A logger instance for logging.
   - `ctx`: The context for client operations.
-  - `cancel`: A cancel function to stop the context.
 
 - **Returns:**  
   A pointer to the initialized `Client` and an error if any occurred.
