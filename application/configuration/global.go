@@ -20,9 +20,9 @@ const EmptyString = ""
  * GlobalConfiguration holds the global settings for the application.
  */
 type GlobalConfiguration struct {
-	DebugMode             int    // DebugMode controls the logging level.
-	ConfigFilePath        string // ConfigFilePath is the path to the configuration file.
-	DefaultMaxStorageLogs int64  // DefaultMaxStorageLogs is the default maximum number of storage logs per variable.
+	LogLevel              string `json:"logLevel"`              // LogLevel controls the logging level.
+	ConfigFilePath        string `json:"configFilePath"`        // ConfigFilePath is the path to the configuration file.
+	DefaultMaxStorageLogs int64  `json:"defaultMaxStorageLogs"` // DefaultMaxStorageLogs is the default maximum number of storage logs per variable.
 }
 
 /**
@@ -33,7 +33,7 @@ type GlobalConfiguration struct {
  */
 func InitializeGlobalConfiguration() *GlobalConfiguration {
 	global := &GlobalConfiguration{
-		DebugMode:             GetEnvAsInt("DEBUG", 1),
+		LogLevel:              GetEnv("LOG_LEVEL", "info"),
 		ConfigFilePath:        GetEnv("CONFIG_FILE", "config.json"),
 		DefaultMaxStorageLogs: GetEnvAsInt64("MAX_LOG_STORAGE", 1000),
 	}
@@ -47,7 +47,7 @@ func InitializeGlobalConfiguration() *GlobalConfiguration {
  * @param global A pointer to the GlobalConfiguration to be overridden.
  */
 func overrideGlobalConfigWithFlags(global *GlobalConfiguration) {
-	flag.IntVar(&global.DebugMode, "debug", global.DebugMode, "Debug mode (0=all logs, 1=info only, 2=errors only)")
+	flag.StringVar(&global.LogLevel, "log-level", global.LogLevel, "Log level (e.g., 'debug', 'info', 'warn', 'error', 'fatal', 'panic', 'trace')")
 	flag.StringVar(&global.ConfigFilePath, "config-file", global.ConfigFilePath, "Path to the configuration file")
 	flag.Int64Var(&global.DefaultMaxStorageLogs, "max-log-storage", global.DefaultMaxStorageLogs, "Maximum number of storage logs per variable")
 	flag.Parse()
@@ -197,27 +197,23 @@ func GetEnvAsInt64(name string, defaultValue int64) int64 {
 
 /**
  * Initializes and returns a new logrus.Logger based on the debug level.
- * Debug levels:
- * - 0: DebugLevel (all logs)
- * - 1: InfoLevel (info logs and above)
- * - 2: ErrorLevel (errors only)
  *
- * @param debug The debug level for the logger.
+ * @param logLevel The log level for the logger (e.g., "debug", "info", "warn").
  * @return A pointer to the initialized logrus.Logger.
  */
-func InitializeLogger(debug int) *logrus.Logger {
+func InitializeLogger(logLevel string) *logrus.Logger {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 	})
-	// Set the log level based on the debug parameter.
-	switch debug {
-	case 0:
-		logger.SetLevel(logrus.DebugLevel)
-	case 1:
-		logger.SetLevel(logrus.InfoLevel)
-	default:
-		logger.SetLevel(logrus.ErrorLevel)
+
+	// Set the log level based on the logLevel parameter.
+	level, err := logrus.ParseLevel(logLevel)
+	if err != nil {
+		logger.WithError(err).Warnf("Invalid log level '%s', defaulting to 'info'", logLevel)
+		level = logrus.InfoLevel
 	}
+	logger.SetLevel(level)
+
 	return logger
 }
