@@ -26,7 +26,7 @@ Encapsulates the Redis client and related configurations.
 
 ### `func NewClient(logger *logrus.Logger, ctx context.Context) (*Client, error)`
 
-Initializes and returns a new Redis client.
+Initializes and returns a new Redis client. The `context.CancelFunc` is not required as a parameter.
 
 - **Parameters:**
 

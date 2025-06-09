@@ -21,3 +21,11 @@ Initializes and starts the HTTP server.
 
 - **Returns:**  
   An error if the server fails to start.
+
+## Endpoints
+
+The server exposes the following endpoints:
+
+- **`/healthz`**: A health check endpoint that returns `Health ok!` with a status code of `200 OK`.
+- **`/status`**: Returns the current status of the connector in JSON format.
+- **`/uuid-mapping`**: Returns the current UUID mapping from Redis in JSON format.

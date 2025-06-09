@@ -8,7 +8,7 @@ This project provides a framework for creating connectors that interact with a R
 
 ## Prerequisites
 
-- **Go** version 1.16 or higher.
+- **Go** version 1.23.1 or higher.
 - **Redis** installed and running.
 - Familiarity with Go language and concepts like contexts, logging, and error handling.
 
@@ -26,13 +26,14 @@ Ensure that the package is properly installed and available in your project.
 
 The project is divided into several key packages:
 
-- **Global**: Manages global application configuration.
-- **PubSub**: Manages Pub/Sub communication through Redis.
-- **UUID**: Manages UUID mapping and persistence.
-- **Redis**: Contains functions to interact with Redis and manage the stream.
-- **Server**: Provides an HTTP server for the connector interface.
-- **App**: Contains the main application logic.
-- **Configuration**: Manages loading connector configurations.
+- **application**: Contains the main application logic, including the `Connector` interface and signal handling.
+- **application/configuration**: Manages global application configuration.
+- **redis**: Contains functions to interact with Redis, manage the data stream, and handle Pub/Sub communication.
+- **redis/configuration**: Manages Redis-specific configuration.
+- **redis/pubsub**: Manages Pub/Sub communication through Redis.
+- **redis/uuid**: Manages UUID mapping and persistence.
+- **server**: Provides an HTTP server for the connector interface.
+- **server/configuration**: Manages server-specific configuration.
 
 ## Global Configuration
 
@@ -41,39 +42,38 @@ To initialize global configuration, use the `InitializeGlobalConfiguration()` fu
 ```go
 import "github.com/femogas/datalogger/application/configuration"
 
-config := configuration.InitializeGlobalConfiguration()
+config := global.InitializeGlobalConfiguration()
 ```
 
 This configuration is essential for setting up the connector correctly and should be integrated at the beginning of your application.
 
 ## Logger Initialization
 
-The logger is essential for monitoring the operation of your connector. Initialize it using `InitializeLogger(debug int)` from the `global` package, where `debug` represents the desired logging level:
-
-- `0`: DebugLevel (all logs)
-- `1`: InfoLevel (informative and higher level logs)
-- `2`: ErrorLevel (errors only)
+The logger is essential for monitoring the operation of your connector. Initialize it using `InitializeLogger(logLevel string)` from the `global` package, where `logLevel` is a string representing the desired logging level (e.g., "debug", "info", "warn", "error").
 
 ```go
-import "github.com/femogas/datalogger/application"
+import "github.com/femogas/datalogger/application/configuration"
 
-logger := application.InitializeLogger(config.DebugMode)
+logger := global.InitializeLogger(config.LogLevel)
 ```
 
 The logger will help you track the connector's activities and debug issues effectively.
 
 ## Connecting to Redis
 
-To interact with Redis, create a new client using `NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc)` from the `redis` package.
+To interact with Redis, create a new client using `NewClient(logger *logrus.Logger, ctx context.Context)` from the `redis` package.
 
 ```go
 import (
     "context"
     "github.com/femogas/datalogger/redis"
+    "github.com/sirupsen/logrus"
 )
 
 ctx, cancel := context.WithCancel(context.Background())
-redisClient, err := redis.NewClient(logger, ctx, cancel)
+defer cancel()
+
+redisClient, err := redis.NewClient(logger, ctx)
 if err != nil {
     logger.Fatalf("Error initializing Redis client: %v", err)
 }
@@ -84,7 +84,7 @@ Proper context management ensures the Redis client connection is closed when it 
 
 ## UUID Management
 
-UUIDs are used to uniquely identify nodes or endpoints. The UUID management process is now handled automatically within the Redis client, making it easier to manage and integrate UUIDs for your nodes.
+UUIDs are used to uniquely identify nodes or endpoints. The UUID management process requires an explicit call to `GenerateUUIDMap` to synchronize the UUIDs with Redis.
 
 ```go
 // Generate UUID map
@@ -98,7 +98,7 @@ This step is essential for ensuring each node is uniquely identified and can be 
 
 ## Connector Implementation
 
-To create a custom connector, implement the `Connector` interface provided by the Datalogger package. This interface includes methods for setting up, starting, stopping, and checking the connector's status.
+To create a custom connector, implement the `Connector` interface, which is defined in the `application/producer` package. This interface includes methods for setting up, starting, stopping, and checking the connector's status.
 
 ### Connector Interface
 
@@ -110,7 +110,7 @@ type Connector interface {
     Start() error
     Status() Status
     Stop() error
-    CreateValidKeys() map[string]struct{}
+    CreateValidKeys() map[string]interface{}
 }
 ```
 
@@ -118,121 +118,113 @@ You must implement these methods to define how your connector should behave duri
 
 ### Example Usage
 
-To use the connector, you need to create an instance of your connector struct and initialize it with the necessary dependencies, such as Redis and global configuration.
+To use the connector, you need to create an instance of your connector struct and initialize it with the necessary dependencies, such as Redis and global configuration. The following `main` function example demonstrates how to set up and run the application:
 
 ```go
+package main
+
 import (
-    "context"
-    "sync"
-    "github.com/femogas/datalogger/application"
-    "github.com/femogas/datalogger/application/configuration"
-    "github.com/femogas/datalogger/redis"
-    "github.com/femogas/datalogger/server"
-    "github.com/sirupsen/logrus"
+	"context"
+	"sync"
+
+	producer "github.com/femogas/datalogger/application"
+	global "github.com/femogas/datalogger/application/configuration"
+	"github.com/femogas/datalogger/redis"
+	"github.com/femogas/datalogger/server"
+	"github.com/sirupsen/logrus"
 )
 
-/**
-* @struct YourNewConnector
-* @brief Manages client connections and configurations.
-*
-* This struct handles the setup, validation, and management of clients based on
-* the provided configurations. It ensures thread-safe operations using mutex locks.
-*/
+// YourNewConnector manages client connections and configurations.
 type YourNewConnector struct {
-    clients       []*YourNewConnectorClient // Slice of active multiple clients
-    mutex         sync.Mutex                // Mutex for synchronizing access to the connector
-    running       bool                      // Indicates if the connector is currently running
-    Logger        *logrus.Logger            // Logger for logging activities and errors
-    Configuration *configuration.Connector  // Connector configurations
-    Redis         *redis.Client             // Redis client for data storage and retrieval
+	mutex         sync.Mutex
+	running       bool
+	Logger        *logrus.Logger
+	Configuration *global.Connector
+	Redis         *redis.Client
 }
 
-/**
-* @brief The main function initializes the application components and starts the server.
-*
-* It performs the following steps:
-* 1. Initializes global configuration and logger.
-* 2. Loads configurations from the specified config file.
-* 3. Initializes the Redis client.
-* 4. Sets up the UUID mapper and connector.
-* 5. Starts the Pub/Sub listener for commands.
-* 6. Starts the HTTP server.
-* 7. Handles graceful shutdown upon receiving termination signals.
-*/
+// Setup initializes the connector.
+func (c *YourNewConnector) Setup(globalconfig *global.GlobalConfiguration) error {
+	// Add your setup logic here
+	return nil
+}
+
+// Start begins the connector's operation.
+func (c *YourNewConnector) Start() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.running = true
+	// Add your start logic here
+	return nil
+}
+
+// Status returns the current status of the connector.
+func (c *YourNewConnector) Status() producer.Status {
+	// Add your status logic here
+	return producer.Status{}
+}
+
+// Stop halts the connector's operation.
+func (c *YourNewConnector) Stop() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.running = false
+	// Add your stop logic here
+	return nil
+}
+
+// CreateValidKeys generates a map of valid keys.
+func (c *YourNewConnector) CreateValidKeys() map[string]interface{} {
+	validKeys := make(map[string]interface{})
+	// Add your logic to create valid keys here
+	return validKeys
+}
+
 func main() {
-    globalConfig := configuration.InitializeGlobalConfiguration()
-    logger := application.InitializeLogger(globalConfig.DebugMode)
+	globalConfig := global.InitializeGlobalConfiguration()
+	logger := global.InitializeLogger(globalConfig.LogLevel)
 
-    // Load configurations and handle potential errors.
-    configurations, err := configuration.LoadConfigurations(globalConfig.ConfigFilePath)
-    if err != nil {
-        logger.Fatalf("Error loading configurations: %v", err)
-    }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-    // Create a cancellable context for managing lifecycle.
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
+	redisClient, err := redis.NewClient(logger, ctx)
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to initialize Redis client")
+	}
+	defer redisClient.Close()
 
-    // Initialize Redis client
-    redisClient, err := redis.NewClient(logger, ctx, cancel)
-    if err != nil {
-        logger.WithError(err).Fatal("Failed to initialize Redis client")
-    }
-    defer redisClient.Close()
+	connector := &YourNewConnector{
+		Redis:  redisClient,
+		Logger: logger,
+	}
 
-    // Create your custom connector instance
-    connector := &YourNewConnector{
-        Redis:         redisClient,
-        Logger:        logger,
-        Configuration: &configuration.Connector{Configurations: configurations},
-    }
+	if err := connector.Setup(globalConfig); err != nil {
+		logger.Fatalf("Error setting up connector: %v", err)
+	}
 
-    // Generate UUID map
-    err = redisClient.GenerateUUIDMap(connector.CreateValidKeys)
-    if err != nil {
-        logger.WithError(err).Fatal("Failed to generate UUID map")
-    }
+	err = redisClient.GenerateUUIDMap(connector.CreateValidKeys)
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to generate UUID map")
+	}
 
-    // Setup the connector with global configurations and handle setup errors.
-    if err := connector.Setup(globalConfig); err != nil {
-        logger.Fatalf("Error setting up connector: %v", err)
-    }
+	appInstance := &producer.Main{
+		Context:   ctx,
+		Cancel:    cancel,
+		Connector: connector,
+		Logger:    logger,
+		Redis:     redisClient,
+	}
 
-    go redisClient.ListenForCommands(connector.Start, connector.Stop)
+	go redisClient.ListenForCommands(connector.Start, connector.Stop)
 
-    // Initialize and start the HTTP server, handling any startup errors.
-    httpServer := server.NewServer(appInstance, logger)
-    if err := httpServer.Start(); err != nil {
-        logger.Fatalf("Error starting server: %v", err)
-    }
+	httpServer := server.NewServer(appInstance, logger)
+	if err := httpServer.Start(); err != nil {
+		logger.Fatalf("Error starting server: %v", err)
+	}
 
-    // Setup signal handling for graceful shutdown.
-    producer.SetupSignalHandling(appInstance, connector)
+	producer.SetupSignalHandling(appInstance, connector)
 
-    // Wait for the context to be canceled (e.g., via a termination signal).
-    <-ctx.Done()
-}
-
-/**
-* @brief Creates a map of valid keys by hashing endpoint URLs and node IDs.
-*
-* This function iterates through all configurations and nodes, generating a unique key
-* for each combination of endpoint URL and node ID. This logic can be customized as needed.
-*
-* @return A map with unique keys pointing to their respective node configurations.
-*/
-func (connector *YourNewConnector) CreateValidKeys() map[string]interface{} {
-    validKeys := make(map[string]interface{})
-    for item := range connector.Configuration.Configurations {
-        configuration := &connector.Configuration.Configurations[item]
-        for index := range configuration.Nodes {
-            node := &configuration.Nodes[index]
-            // Custom logic for key generation, e.g., using node ID and endpoint URL
-            key := node.ID + "-" + configuration.EndpointURL
-            validKeys[key] = node
-        }
-    }
-    return validKeys
+	<-ctx.Done()
 }
 ```
 
@@ -263,11 +255,19 @@ if err := httpServer.Start(); err != nil {
 }
 ```
 
-The server provides a simple interface to monitor and control the connector, facilitating integration with other components like a Node.js application.
+The server provides a simple interface to monitor and control the connector, facilitating integration with other components.
+
+### Server Endpoints
+
+The HTTP server exposes the following endpoints:
+
+- **`/healthz`**: A health check endpoint that returns `Health ok!` with a status code of `200 OK`.
+- **`/status`**: Returns the current status of the connector in JSON format.
+- **`/uuid-mapping`**: Returns the current UUID mapping from Redis in JSON format.
 
 ## Pub/Sub Listener
 
-The Redis client includes a listener for commands that control the connector. Use the `ListenForCommands` method to start or stop the connector based on messages received.
+The Redis client includes a listener for commands that control the connector. Use the `ListenForCommands` method to start or stop the connector based on messages received on the `remote-control` channel.
 
 ```go
 go redisClient.ListenForCommands(connector.Start, connector.Stop)
