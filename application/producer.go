@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/femogas/datalogger/application/configuration"
+	global "github.com/femogas/datalogger/application/configuration"
 	"github.com/femogas/datalogger/redis"
 	"github.com/sirupsen/logrus"
 )
@@ -132,12 +132,14 @@ func handleSignals(signals chan os.Signal, application *Main, connector Connecto
 	logger := application.Logger.WithField("signal", sig)
 	logger.Info("Termination signal received, shutting down safely...")
 	if connector != nil {
-        logger.Debug("Stopping connector...")
-        if err := connector.Stop(); err != nil {
-            logger.WithError(err).Error("Error stopping connector")
-        }
-    }
-	application.Redis.Close();
+		logger.Debug("Stopping connector...")
+		if err := connector.Stop(); err != nil {
+			logger.WithError(err).Error("Error stopping connector")
+		}
+	}
+	if err := application.Redis.Close(); err != nil {
+		logger.WithError(err).Error("Error closing Redis client")
+	}
 	application.Cancel()
 	logger.Info("Shutdown complete.")
 }
